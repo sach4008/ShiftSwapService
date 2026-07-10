@@ -211,8 +211,8 @@ sequenceDiagram
     M->>S: POST /swap-requests/{id}/approve
     S->>DB: load request (+ shifts, parties)
     S->>S: temporal expiry check — may transition to EXPIRED, return 409
-    S->>S: guards: still PENDING; caller is both parties' current manager
-    S->>S: ownership matches snapshot; both shifts still future; no overlap results
+    S->>S: guards: still PENDING, caller is both parties' current manager
+    S->>S: ownership matches snapshot, both shifts still future, no overlap results
     S->>DB: swap the two shift.employeeId values (versioned writes)
     S->>DB: request → APPROVED, resolvedAt/By set
     S->>DB: commit (any failure rolls back everything)
