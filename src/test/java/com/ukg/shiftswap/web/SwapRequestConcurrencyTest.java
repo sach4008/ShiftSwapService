@@ -4,6 +4,7 @@ import com.ukg.shiftswap.domain.Employee;
 import com.ukg.shiftswap.domain.Shift;
 import com.ukg.shiftswap.domain.SwapRequest;
 import com.ukg.shiftswap.domain.SwapRequestStatus;
+import com.ukg.shiftswap.domain.exception.InvalidStateTransitionException;
 import com.ukg.shiftswap.domain.exception.RequestExpiredException;
 import com.ukg.shiftswap.repository.EmployeeRepository;
 import com.ukg.shiftswap.repository.ShiftRepository;
@@ -91,9 +92,11 @@ class SwapRequestConcurrencyTest {
         List<Future<String>> outcomes = runConcurrently(List.of(attempt, attempt));
 
         long successCount = outcomes.stream().filter(f -> resultOf(f).equals("OK")).count();
-        long conflictCount = outcomes.stream().filter(f -> resultOf(f).equals("CONFLICT")).count();
+        long rejectedCount = outcomes.stream()
+                .filter(f -> resultOf(f).equals("CONFLICT") || resultOf(f).equals("ALREADY_DECIDED"))
+                .count();
         assertThat(successCount).isEqualTo(1);
-        assertThat(conflictCount).isEqualTo(1);
+        assertThat(rejectedCount).isEqualTo(1);
 
         SwapRequest resolved = swapRequestRepository.findById(request.getId()).orElseThrow();
         assertThat(resolved.getStatus()).isEqualTo(SwapRequestStatus.APPROVED);
@@ -151,6 +154,8 @@ class SwapRequestConcurrencyTest {
             return "OK";
         } catch (ObjectOptimisticLockingFailureException e) {
             return "CONFLICT";
+        } catch (InvalidStateTransitionException e) {
+            return "ALREADY_DECIDED";
         } catch (RequestExpiredException e) {
             return "EXPIRED";
         } catch (Exception e) {
