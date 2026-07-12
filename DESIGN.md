@@ -167,6 +167,70 @@ Declared in the entity model via Hibernate annotations (`@Check`, `@Column(uniqu
 - Uniqueness on `employee.email`.
 - **Partial unique index — not built.** The design calls for unique `(requester_shift_id) WHERE status = 'PENDING'` and `(target_shift_id) WHERE status = 'PENDING'` as DB-level enforcement of "one PENDING request per shift," backstopping the concurrent-create race. This needs a real migration tool (Hibernate can't express a partial/conditional unique index declaratively), so it doesn't exist in any profile yet, including docker/Postgres. Today, in every profile, the guarantee rests entirely on the service-layer check plus `Shift.version` — the index remains a recommended production hardening step, not a current hard stop. Tracked in Future Work.
 
+### 4.5 Class Diagram
+The core aggregate as classes rather than as tables — fields, key methods, and how the three domain objects reference each other. Kept to the domain layer rather than all ~49 classes in the codebase; the package-level view is in §17.
+
+```mermaid
+classDiagram
+    class Employee {
+        -Long id
+        -String name
+        -String email
+        -String title
+        -Long managerId
+        +isManagerOf(Employee) boolean
+        +sharesManagerWith(Employee) boolean
+    }
+
+    class Shift {
+        -Long id
+        -Long employeeId
+        -Instant startsAt
+        -Instant endsAt
+        -Long version
+        +isInFuture(Instant) boolean
+        +hasStarted(Instant) boolean
+        +overlapsWith(Shift) boolean
+        +reassignOwner(Long) void
+    }
+
+    class SwapRequest {
+        -UUID id
+        -Long requesterId
+        -Long requesterShiftId
+        -Long targetShiftId
+        -Long targetEmployeeId
+        -SwapRequestStatus status
+        -String reason
+        -String resolutionNote
+        -Instant createdAt
+        -Instant resolvedAt
+        -Long resolvedBy
+        -Long version
+        +approve(Long, String, Instant) void
+        +reject(Long, String, Instant) void
+        +cancel(Long, Instant) void
+        +expire(Instant) void
+    }
+
+    class SwapRequestStatus {
+        <<enumeration>>
+        PENDING
+        APPROVED
+        REJECTED
+        CANCELLED
+        EXPIRED
+    }
+
+    Employee "1" --> "0..1" Employee : managerId
+    Employee "1" --> "*" Shift : owns
+    SwapRequest "*" --> "1" Employee : requester
+    SwapRequest "*" --> "1" Employee : target (snapshotted)
+    SwapRequest "*" --> "1" Shift : requesterShift
+    SwapRequest "*" --> "1" Shift : targetShift
+    SwapRequest --> SwapRequestStatus : status
+```
+
 ## 5. State Machine
 
 Modeled explicitly — one guarded transition function in the service layer, not scattered `if (status == …)` checks — so legal transitions, idempotency, and atomicity have a single enforcement point.
@@ -561,4 +625,40 @@ AI (Claude) was used throughout this assignment: as a design collaborator for `D
 - **k6 smoke test** to validate the §1.4 latency budgets, which are currently stated targets rather than measured ones.
 - Data-subject **deletion / anonymization** flow (§9.4).
 - **OpenTelemetry** tracing; per-user rate limiting.
+
+---
+
+## 16. Tech Stack
+
+Java 21 · Spring Boot 3.3.5 · Maven (wrapper committed — no local Maven install needed) · Spring Web + Bean Validation · Spring Data JPA (Hibernate) · H2 (local/test) + Postgres 16 (docker compose) · springdoc-openapi 2.6.0 (Swagger UI) · Spring Boot Actuator + Micrometer (Prometheus registry) · JUnit 5 + MockMvc + AssertJ · Docker (multi-stage build) + Docker Compose · GitHub Actions CI + Trivy (vulnerability scan, report-only — §13.2).
+
+---
+
+## 17. Repository / Class Structure
+
+```
+ShiftSwapService/
+├── src/main/java/com/ukg/shiftswap/
+│   ├── ShiftSwapApplication.java   # Spring Boot entry point
+│   ├── domain/                     # Employee, Shift, SwapRequest, SwapRequestStatus; guarded transitions (§5)
+│   │   └── exception/              # DomainException hierarchy — one subtype per §6.6 error code
+│   ├── repository/                 # Spring Data JPA repositories (no business logic)
+│   ├── service/                    # Business rules, authorization, transaction boundary, metrics (§7)
+│   ├── web/                        # Controllers, global exception handler
+│   │   ├── dto/                    # Request/response records
+│   │   ├── error/                  # ErrorResponse — the one error shape (§6.5)
+│   │   └── security/               # Identity filter, correlation-id filter, @CurrentUserId resolver (§9.1)
+│   └── config/                     # Seed data, OpenAPI, Clock bean
+├── src/main/resources/             # application.yml + local/docker profiles
+├── src/test/java/com/ukg/shiftswap/
+│   ├── domain/                     # Unit tests — plain JUnit, no Spring context
+│   └── web/                        # MockMvc integration tests + concurrency tests
+├── Dockerfile
+├── docker-compose.yml
+├── .github/workflows/ci.yml
+├── README.md
+└── DESIGN.md
+```
+
+The class diagram in §4.5 covers the domain layer's fields/methods/relationships; this is the package-level view of the whole codebase.
 
