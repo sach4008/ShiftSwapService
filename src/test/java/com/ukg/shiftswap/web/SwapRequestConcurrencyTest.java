@@ -14,8 +14,8 @@ import com.ukg.shiftswap.service.SwapRequestService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.ConcurrencyFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
@@ -89,14 +89,12 @@ class SwapRequestConcurrencyTest {
 
         CyclicBarrier barrier = new CyclicBarrier(2);
         Callable<String> attempt = () -> attemptApprove(request.getId(), manager.getId(), barrier);
-        List<Future<String>> outcomes = runConcurrently(List.of(attempt, attempt));
+        List<String> results = runConcurrently(List.of(attempt, attempt)).stream()
+                .map(SwapRequestConcurrencyTest::resultOf)
+                .toList();
 
-        long successCount = outcomes.stream().filter(f -> resultOf(f).equals("OK")).count();
-        long rejectedCount = outcomes.stream()
-                .filter(f -> resultOf(f).equals("CONFLICT") || resultOf(f).equals("ALREADY_DECIDED"))
-                .count();
-        assertThat(successCount).isEqualTo(1);
-        assertThat(rejectedCount).isEqualTo(1);
+        long successCount = results.stream().filter(r -> r.equals("OK")).count();
+        assertThat(successCount).as("outcomes: %s", results).isEqualTo(1);
 
         SwapRequest resolved = swapRequestRepository.findById(request.getId()).orElseThrow();
         assertThat(resolved.getStatus()).isEqualTo(SwapRequestStatus.APPROVED);
@@ -152,7 +150,7 @@ class SwapRequestConcurrencyTest {
             barrier.await();
             swapRequestService.approve(managerId, requestId, "Coverage confirmed");
             return "OK";
-        } catch (ObjectOptimisticLockingFailureException e) {
+        } catch (ConcurrencyFailureException e) {
             return "CONFLICT";
         } catch (InvalidStateTransitionException e) {
             return "ALREADY_DECIDED";
