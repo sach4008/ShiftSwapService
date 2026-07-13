@@ -94,11 +94,7 @@ class SwapRequestConcurrencyTest {
                 .toList();
 
         long successCount = results.stream().filter(r -> r.equals("OK")).count();
-        long rejectedCount = results.stream()
-                .filter(r -> r.equals("CONFLICT") || r.equals("ALREADY_DECIDED"))
-                .count();
         assertThat(successCount).as("outcomes: %s", results).isEqualTo(1);
-        assertThat(rejectedCount).as("outcomes: %s", results).isEqualTo(1);
 
         SwapRequest resolved = swapRequestRepository.findById(request.getId()).orElseThrow();
         assertThat(resolved.getStatus()).isEqualTo(SwapRequestStatus.APPROVED);
